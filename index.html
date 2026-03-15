@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Worker System | Final Version</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; overflow-x: hidden; }
+        .page { display: none; }
+        .page.active { display: block; animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        #loading-screen { position: fixed; inset: 0; background: #2563eb; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.5s ease, visibility 0.5s; }
+        #loading-screen.fade-out { opacity: 0; visibility: hidden; }
+        .pulse-loader { width: 80px; height: 80px; background: white; border-radius: 30px; animation: pulse-ring 1.5s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite; display: flex; align-items: center; justify-content: center; }
+        @keyframes pulse-ring { 0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(255,255,255,0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 20px rgba(255,255,255,0); } 100% { transform: scale(0.8); } }
+        #notification-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; width: 90%; max-width: 400px; pointer-events: none; }
+        .toast { background: white; padding: 16px 20px; border-radius: 20px; box-shadow: 0 15px 30px rgba(0,0,0,0.1); margin-bottom: 10px; display: flex; align-items: center; gap: 12px; transform: translateY(-100px); opacity: 0; transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55); pointer-events: auto; border-left: 6px solid #ccc; }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .nav-btn.active { color: #2563eb; background: #eff6ff; }
+        .nav-btn.admin-active { color: #dc2626; background: #fef2f2; }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(8px); z-index: 10000; display: none; align-items: center; justify-content: center; padding: 20px; }
+        .modal-overlay.show { display: flex; }
+        #sticky-broadcast { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 45; width: 90%; max-width: 450px; transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); opacity: 0; pointer-events: none; }
+        #sticky-broadcast.active { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+    </style>
+</head>
+<body class="bg-[#f8fafc] text-slate-900 min-h-screen">
+
+    <div id="loading-screen">
+        <div class="pulse-loader">
+            <svg class="w-10 h-10 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <p class="mt-8 text-white font-black italic tracking-widest text-xs animate-pulse uppercase">Memulai System...</p>
+    </div>
+
+    <div id="notification-container"></div>
+
+    <div id="edit-account-modal" class="modal-overlay">
+        <div class="bg-white w-full max-w-sm p-8 rounded-[2.5rem] shadow-2xl space-y-4 border-t-8 border-blue-600">
+            <h3 class="font-black text-xl text-slate-800 uppercase italic text-center">Update Master Data</h3>
+            <div class="space-y-4">
+                <div><label class="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">Username</label><input id="edit-usn" type="text" readonly class="w-full p-4 bg-slate-100 border-none rounded-2xl outline-none font-bold text-slate-500 text-xs"></div>
+                <div><label class="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">WhatsApp</label><input id="edit-wa" type="number" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-xs font-bold" placeholder="628..."></div>
+                <div><label class="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">Password</label><input id="edit-pass" type="text" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-xs font-bold"></div>
+                <div><label class="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label><select id="edit-role" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-xs font-bold"><option value="worker">WORKER</option><option value="admin">ADMIN</option></select></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 pt-4"><button onclick="closeModal('edit-account-modal')" class="py-4 bg-slate-100 text-slate-600 rounded-2xl text-[10px] font-black uppercase">Batal</button><button onclick="saveAccountChange()" class="py-4 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase shadow-lg">Simpan</button></div>
+        </div>
+    </div>
+
+    <div id="confirm-delete-modal" class="modal-overlay">
+        <div class="bg-white w-full max-w-sm p-8 rounded-[2.5rem] shadow-2xl space-y-4 text-center">
+            <div class="w-16 h-16 bg-red-100 text-red-600 rounded-full mx-auto flex items-center justify-center"><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></div>
+            <h3 class="font-black text-lg text-slate-800 uppercase italic">Konfirmasi Hapus</h3>
+            <p class="text-xs text-slate-500 font-medium leading-relaxed">Yakin hapus data ini?</p>
+            <div class="grid grid-cols-2 gap-3 pt-4"><button onclick="closeModal('confirm-delete-modal')" class="py-4 bg-slate-100 text-slate-600 rounded-2xl text-[10px] font-black uppercase">Batal</button><button id="btn-confirm-execute" class="py-4 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-red-200">Ya, Hapus Paksa</button></div>
+        </div>
+    </div>
+
+    <div id="sticky-broadcast">
+        <div class="bg-blue-600 text-white p-5 rounded-[2rem] shadow-2xl flex items-start gap-4 relative border-b-8 border-blue-800">
+            <div class="bg-white/20 p-2 rounded-2xl"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg></div>
+            <div class="flex-1 pr-6"><p class="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">Pesan Admin</p><p id="display-bc" class="text-sm font-bold leading-relaxed mt-1">...</p></div>
+            <button onclick="closeStickyBC()" class="absolute top-4 right-4 bg-black/20 p-1.5 rounded-full hover:bg-black/40 transition-all"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+        </div>
+    </div>
+
+    <div id="auth-page" class="page active min-h-screen flex items-center justify-center p-6 bg-slate-50">
+        <div class="w-full max-w-sm space-y-8 text-center">
+            <div class="w-20 h-20 bg-blue-600 rounded-[2rem] mx-auto flex items-center justify-center shadow-2xl"><svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg></div>
+            <h1 id="auth-title" class="text-3xl font-black text-slate-800 italic uppercase tracking-tighter">Akses Worker</h1>
+            <div class="bg-white p-8 rounded-[2.5rem] shadow-2xl space-y-4 text-left border-b-4 border-blue-100">
+                <input type="text" id="auth-user" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none text-xs font-bold uppercase" placeholder="Username">
+                <input type="password" id="auth-pass" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none text-xs font-bold" placeholder="Password">
+                <div id="reg-fields" class="hidden space-y-4">
+                    <input type="number" id="auth-wa" class="w-full p-4 bg-blue-50 border border-blue-100 rounded-2xl outline-none text-xs font-bold" placeholder="WhatsApp (628...)">
+                    <input type="password" id="admin-key" class="w-full p-4 bg-red-50 border border-red-100 rounded-2xl outline-none text-xs font-bold" placeholder="Admin Key">
+                </div>
+                <button onclick="handleAuth()" id="main-auth-btn" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl active:scale-95 uppercase tracking-widest italic transition-all">MASUK</button>
+                <div class="text-center pt-2"><button onclick="toggleAuthMode()" id="toggle-btn" class="text-blue-600 text-[10px] font-black uppercase tracking-widest">Daftar Baru</button></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-app" class="page min-h-screen">
+        <header class="p-5 flex justify-between items-center bg-white/90 backdrop-blur-xl sticky top-0 z-40 border-b border-gray-100">
+            <div class="flex items-center space-x-3"><div id="role-badge" class="px-3 py-1.5 rounded-full flex items-center gap-2 border bg-white"><div id="role-indicator-dot" class="w-2 h-2 rounded-full"></div><span id="role-text" class="text-[9px] font-black uppercase tracking-widest">...</span></div><h2 id="display-username" class="text-lg font-black text-slate-800 uppercase italic">User</h2></div>
+            <button onclick="location.reload()" class="bg-red-50 text-red-500 p-2.5 rounded-xl border border-red-100 active:scale-90 transition-all"><svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg></button>
+        </header>
+        <main class="p-6 pb-36 max-w-lg mx-auto">
+            <div id="sec-home" class="section active space-y-6">
+                <div id="job-status-indicator" class="w-full p-4 rounded-3xl border flex items-center justify-center gap-3 shadow-sm"><div id="status-pulse" class="w-2.5 h-2.5 rounded-full"></div><span id="status-text-label" class="text-[10px] font-black uppercase tracking-widest italic text-slate-400">Memuat Status...</span></div>
+                <div class="p-8 rounded-[2.5rem] text-white shadow-xl bg-gradient-to-br from-blue-600 to-indigo-800 text-center border-b-4 border-blue-900"><p class="text-[10px] font-black opacity-60 uppercase tracking-widest mb-1">Poin Saya</p><h3 id="stat-count" class="text-6xl font-black italic">0</h3></div>
+                <div class="space-y-4"><h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest italic px-2">Pusat Informasi</h4><div id="news-log-list" class="space-y-4"></div></div>
+            </div>
+            <div id="sec-setoran" class="section hidden space-y-6">
+                <div class="bg-white p-8 rounded-[3rem] shadow-xl space-y-6">
+                    <div class="text-center"><h3 class="font-black text-2xl text-slate-800 uppercase italic">Setoran Data</h3><p class="text-[10px] font-black text-blue-600 bg-blue-50 inline-block px-4 py-1.5 rounded-full mt-2 tracking-widest">Password: aass1122</p></div>
+                    <textarea id="email-input" rows="10" class="w-full p-6 bg-slate-50 border-none rounded-[2rem] outline-none font-mono text-xs font-bold" placeholder="Paste list email di sini..."></textarea>
+                    <button onclick="prosesSetoran()" class="w-full bg-blue-600 text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-95 italic transition-all">KIRIM SEKARANG</button>
+                </div>
+            </div>
+            <div id="sec-rank" class="section hidden space-y-6">
+                <div class="bg-slate-900 p-8 rounded-[2.5rem] text-white shadow-2xl text-center"><p class="text-[9px] font-black text-blue-400 uppercase tracking-[0.4em] mb-1">Total Email Terkumpul</p><h3 id="global-total-count" class="text-5xl font-black italic">0</h3></div>
+                <div class="bg-white rounded-[2.5rem] shadow-xl overflow-hidden"><table class="w-full text-left"><tbody id="lb-body" class="divide-y divide-slate-50"></tbody></table></div>
+            </div>
+            <div id="sec-admin" class="section hidden space-y-8">
+                <div class="bg-white p-8 rounded-[3rem] shadow-xl space-y-6">
+                    <h3 class="font-black text-xl text-center text-red-600 uppercase italic">Admin Console</h3>
+                    <div class="p-5 bg-slate-50 rounded-3xl space-y-4 border border-slate-100"><p class="text-[10px] font-black uppercase text-slate-400 italic">1. Popup Broadcast</p><textarea id="admin-bc-input" rows="2" class="w-full p-4 bg-white rounded-2xl border-none text-xs font-bold" placeholder="Kirim notifikasi..."></textarea><button onclick="updateBC()" class="w-full py-3 bg-blue-600 text-white text-[10px] font-black rounded-xl uppercase italic">Kirim</button></div>
+                    <div class="p-5 bg-slate-50 rounded-3xl space-y-4 border border-slate-100"><p class="text-[10px] font-black uppercase text-slate-400 italic">2. Publish News</p><input id="admin-news-title" type="text" class="w-full p-4 bg-white rounded-2xl border-none text-xs font-bold mb-2" placeholder="Judul"><textarea id="admin-news-content" rows="3" class="w-full p-4 bg-white rounded-2xl border-none text-xs font-bold" placeholder="Isi berita..."></textarea><button onclick="postNews()" class="w-full py-3 bg-indigo-600 text-white text-[10px] font-black rounded-xl uppercase italic">Publish</button></div>
+                    <div class="p-5 bg-slate-50 rounded-3xl text-center"><p class="text-[10px] font-black uppercase text-slate-400 italic mb-2">3. Master Job Switch</p><button onclick="toggleJobStatus()" id="admin-status-toggle-btn" class="w-full py-4 rounded-xl font-black text-xs uppercase italic shadow-md transition-all">...</button></div>
+                </div>
+                <div class="space-y-4"><h4 class="text-[11px] font-black text-slate-400 uppercase italic text-center">Database Akun Master</h4><div id="admin-user-list" class="space-y-3"></div></div>
+                <div class="space-y-4"><div class="flex items-center justify-between px-2"><h4 class="text-[11px] font-black text-slate-400 uppercase italic">Laporan Log Harian</h4><input type="date" id="report-date-filter" onchange="loadDailyReport()" class="bg-white text-[10px] font-bold p-2 rounded-xl border border-slate-200"></div><div id="daily-report-list" class="space-y-3"></div></div>
+            </div>
+        </main>
+        <nav class="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-white/95 backdrop-blur-xl border border-white/60 rounded-[3rem] shadow-2xl p-2 z-50 flex justify-around items-center">
+            <button onclick="switchTab('home', this)" class="nav-btn flex-1 py-4 flex justify-center rounded-full transition-all active"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+            <button onclick="switchTab('setoran', this)" class="nav-btn flex-1 py-4 flex justify-center rounded-full transition-all"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+            <button onclick="switchTab('rank', this)" class="nav-btn flex-1 py-4 flex justify-center rounded-full transition-all"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+            <button id="admin-nav-btn" onclick="switchTab('admin', this)" class="nav-btn hidden flex-1 py-4 flex justify-center rounded-full transition-all"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+        </nav>
+    </div>
+
+    <script>
+        const fbConfig = { databaseURL: "https://project-gabut-a5a1b-default-rtdb.firebaseio.com/" };
+        firebase.initializeApp(fbConfig);
+        const db = firebase.database();
+        let currentUser = null, userData = null, isRegisterMode = false, currentJobStatus = true, lastBCMsg = "";
+        window.addEventListener('load', () => { setTimeout(() => { document.getElementById('loading-screen').classList.add('fade-out'); }, 1800); });
+        function showToast(msg, type = 'success') { const container = document.getElementById('notification-container'), t = document.createElement('div'); t.className = `toast border-l-8 ${type==='success'?'border-emerald-500':'border-red-500'}`; t.innerHTML = `<span class="text-[10px] font-black text-slate-800 uppercase italic">${msg}</span>`; container.appendChild(t); setTimeout(() => t.classList.add('show'), 50); setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 400); }, 3000); }
+        function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+        function closeStickyBC() { document.getElementById('sticky-broadcast').classList.remove('active'); }
+        function toggleAuthMode() { isRegisterMode = !isRegisterMode; document.getElementById('auth-title').innerText = isRegisterMode ? "DAFTAR AKUN" : "AKSES WORKER"; document.getElementById('main-auth-btn').innerText = isRegisterMode ? "DAFTAR" : "MASUK"; document.getElementById('reg-fields').classList.toggle('hidden', !isRegisterMode); }
+        async function handleAuth() {
+            const user = document.getElementById('auth-user').value.trim().toLowerCase(), pass = document.getElementById('auth-pass').value.trim(), wa = document.getElementById('auth-wa').value.trim(), key = document.getElementById('admin-key').value.trim();
+            if(!user || !pass) return showToast("Wajib isi user & pass!", "error");
+            if(isRegisterMode) {
+                if(!wa) return showToast("WhatsApp wajib!", "error");
+                const s = await db.ref('users/' + user).once('value');
+                if(s.exists()) return showToast("User sudah ada!", "error");
+                let role = (key === "mzlapq") ? "admin" : "worker";
+                await db.ref('users/' + user).set({ username: user, password: pass, whatsapp: wa, role: role, total: 0 });
+                showToast("Berhasil Terdaftar!"); toggleAuthMode();
+            } else {
+                const s = await db.ref('users/' + user).once('value'), d = s.val();
+                if(d && d.password === pass) { currentUser = user; userData = d; launchApp(); }
+                else showToast("Kredensial Salah!", "error");
+            }
+        }
+        function launchApp() {
+            document.getElementById('auth-page').style.display = 'none';
+            document.getElementById('main-app').classList.add('active');
+            document.getElementById('display-username').innerText = currentUser;
+            const rDot = document.getElementById('role-indicator-dot'), rTxt = document.getElementById('role-text');
+            if(userData.role === 'admin') {
+                document.getElementById('admin-nav-btn').classList.remove('hidden');
+                rDot.className = "w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_red]"; rTxt.innerText = "ADMIN MASTER";
+                document.getElementById('report-date-filter').value = new Date().toISOString().split('T')[0];
+                loadDailyReport(); loadUserDatabase();
+            } else { rDot.className = "w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_blue]"; rTxt.innerText = "WORKER ACTIVE"; }
+            syncRealtime();
+        }
+        function syncRealtime() {
+            db.ref('users/'+currentUser).on('value', s => { if(s.exists()) document.getElementById('stat-count').innerText = s.val().total || 0; });
+            db.ref('system_final/job_open').on('value', s => { currentJobStatus = s.val(); updateJobUI(currentJobStatus); });
+            db.ref('system_final/bc').on('value', s => { const msg = s.val(); if(msg && msg !== lastBCMsg) { lastBCMsg = msg; document.getElementById('display-bc').innerText = msg; document.getElementById('sticky-broadcast').classList.add('active'); } });
+            db.ref('news_logs').on('value', s => {
+                const list = document.getElementById('news-log-list'); list.innerHTML = "";
+                if(!s.exists()) { list.innerHTML = "<p class='text-center text-[9px] text-slate-300 py-10 uppercase font-black italic'>Belum ada berita</p>"; return; }
+                const logs = []; s.forEach(c => logs.push({id: c.key, ...c.val()}));
+                logs.reverse().forEach(n => {
+                    const delBtn = (userData && userData.role === 'admin') ? `<button onclick="askDeleteGeneric('news_logs/${n.id}', 'Hapus?')" class="text-red-500 p-2 bg-red-50 rounded-lg">X</button>` : '';
+                    list.innerHTML += `<div class="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden"><div class="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-500"></div><div class="flex justify-between items-start"><div><p class="text-[8px] font-black text-slate-300 uppercase">${n.date} • ${n.time}</p><h5 class="text-sm font-black text-slate-800 uppercase italic mt-1">${n.title}</h5></div>${delBtn}</div><p class="text-[11px] font-bold text-slate-600 leading-relaxed mt-2">${n.content}</p></div>`;
+                });
+            });
+            db.ref('users').on('value', s => {
+                const b = document.getElementById('lb-body'); b.innerHTML = "";
+                const d = []; let totalSvr = 0; s.forEach(c => { const u = c.val(); d.push(u); totalSvr += (u.total || 0); });
+                document.getElementById('global-total-count').innerText = totalSvr.toLocaleString();
+                d.sort((a,b)=>b.total-a.total).slice(0, 50).forEach((u, idx) => { b.innerHTML += `<tr class="flex justify-between p-5 items-center"><td class="flex items-center gap-3"><span class="text-[9px] font-black text-slate-300 italic">#${idx+1}</span><span class="text-xs font-black text-slate-700 uppercase italic">${u.username}</span></td><td class="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-lg">${u.total}</td></tr>`; });
+            });
+        }
+        async function prosesSetoran() {
+            if(!currentJobStatus) return showToast("Job Closed!", "error");
+            const input = document.getElementById('email-input').value.trim();
+            if(!input) return showToast("Data Kosong!", "error");
+            const count = input.split('\n').filter(l => l.trim()).length;
+            const dKey = new Date().toISOString().split('T')[0];
+            const uRef = db.ref('users/'+currentUser), uSnap = await uRef.once('value'), userWa = uSnap.val().whatsapp || "-";
+            await uRef.update({ total: (uSnap.val().total || 0) + count });
+            const rRef = db.ref(`reports_daily/${dKey}/${currentUser}`), rSnap = await rRef.once('value');
+            if(rSnap.exists()) { const ex = rSnap.val(); await rRef.update({ count: ex.count + count, data: ex.data + "\n" + input }); }
+            else { await rRef.set({ user: currentUser, whatsapp: userWa, count: count, data: input, time: new Date().toLocaleTimeString('id-ID') }); }
+            showToast(`+${count} Poin!`); document.getElementById('email-input').value = "";
+        }
+        function loadDailyReport() {
+            const date = document.getElementById('report-date-filter').value, list = document.getElementById('daily-report-list');
+            db.ref('reports_daily/' + date).on('value', s => {
+                list.innerHTML = "";
+                if(!s.exists()) { list.innerHTML = "<p class='text-center text-[9px] text-slate-300 py-10 italic font-black'>Kosong</p>"; return; }
+                s.forEach(child => {
+                    const r = child.val(); const rawText = `NAMA: ${r.user}\nWA: ${r.whatsapp}\nTOTAL: ${r.count}\n\nLIST:\n${r.data}`;
+                    list.innerHTML += `<div class="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center shadow-sm">
+                        <div class="flex-1"><h6 class="text-[11px] font-black text-slate-800 uppercase italic">${r.user}</h6><p class="text-[8px] font-bold text-slate-400">WA: ${r.whatsapp} | T: ${r.count}</p></div>
+                        <div class="flex gap-2"><button onclick="copyRaw('${rawText.replace(/'/g, "").replace(/\n/g, "\\n")}')" class="bg-slate-50 p-2.5 rounded-xl">Copy</button><button onclick="askDeleteGeneric('reports_daily/${date}/${r.user}', 'Hapus?')" class="bg-red-50 text-red-500 p-2.5 rounded-xl">Del</button></div>
+                    </div>`;
+                });
+            });
+        }
+        function loadUserDatabase() {
+            db.ref('users').on('value', s => {
+                const list = document.getElementById('admin-user-list'); list.innerHTML = "";
+                s.forEach(child => {
+                    const u = child.val();
+                    list.innerHTML += `<div class="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center shadow-sm relative overflow-hidden">
+                        <div class="absolute left-0 top-0 bottom-0 w-1 ${u.role==='admin'?'bg-red-500':'bg-blue-500'}"></div>
+                        <div class="pl-2"><p class="text-[11px] font-black text-slate-800 uppercase italic mb-1">${u.username}</p><p class="text-[8px] font-bold text-slate-400">WA: ${u.whatsapp||'-'} | PW: ${u.password}</p></div>
+                        <div class="flex gap-2"><button onclick="openEditAccount('${u.username}', '${u.password}', '${u.role}', '${u.whatsapp||''}')" class="bg-blue-50 text-blue-500 p-2 rounded-xl">Edit</button></div>
+                    </div>`;
+                });
+            });
+        }
+        function openEditAccount(u, p, r, wa) { document.getElementById('edit-usn').value = u; document.getElementById('edit-pass').value = p; document.getElementById('edit-role').value = r; document.getElementById('edit-wa').value = wa; document.getElementById('edit-account-modal').classList.add('show'); }
+        async function saveAccountChange() { const u = document.getElementById('edit-usn').value, p = document.getElementById('edit-pass').value.trim(), r = document.getElementById('edit-role').value, wa = document.getElementById('edit-wa').value.trim(); await db.ref('users/' + u).update({ password: p, role: r, whatsapp: wa }); showToast("Ok!"); closeModal('edit-account-modal'); }
+        function askDeleteGeneric(path, customTitle) { const modal = document.getElementById('confirm-delete-modal'), btn = document.getElementById('btn-confirm-execute'); modal.querySelector('h3').innerText = customTitle; modal.classList.add('show'); btn.onclick = async () => { if(path.includes('reports_daily')) { const snap = await db.ref(path).once('value'); if(snap.exists()) { const rData = snap.val(), userRef = db.ref('users/' + rData.user), userSnap = await userRef.once('value'); if(userSnap.exists()) await userRef.update({ total: Math.max(0, (userSnap.val().total || 0) - rData.count) }); } } await db.ref(path).remove(); showToast("Dihapus!"); closeModal('confirm-delete-modal'); }; }
+        function updateJobUI(open) {
+            const container = document.getElementById('job-status-indicator'), pulse = document.getElementById('status-pulse'), label = document.getElementById('status-text-label'), adminBtn = document.getElementById('admin-status-toggle-btn');
+            if(open) { pulse.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"; label.innerText = "Status: Terbuka"; adminBtn.innerText = "OPEN JOB (ACTIVE)"; adminBtn.className = "w-full py-4 rounded-xl bg-emerald-500 text-white font-black"; }
+            else { pulse.className = "w-2.5 h-2.5 rounded-full bg-red-500"; label.innerText = "Status: Tutup"; adminBtn.innerText = "JOB CLOSED (OFF)"; adminBtn.className = "w-full py-4 rounded-xl bg-red-500 text-white font-black"; }
+        }
+        function copyRaw(data) { const formatted = data.replace(/\\n/g, "\n"); const dummy = document.createElement("textarea"); document.body.appendChild(dummy); dummy.value = formatted; dummy.select(); document.execCommand("copy"); document.body.removeChild(dummy); showToast("Disalin!"); }
+        function switchTab(id, btn) { document.querySelectorAll('.section').forEach(s => s.classList.add('hidden')); document.getElementById('sec-'+id).classList.remove('hidden'); document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active', 'admin-active')); btn.classList.add(id === 'admin' ? 'admin-active' : 'active'); }
+        function toggleJobStatus() { db.ref('system_final').update({ job_open: !currentJobStatus }); }
+        function updateBC() { const v = document.getElementById('admin-bc-input').value.trim(); db.ref('system_final').update({ bc: v }).then(() => { showToast("Sent!"); document.getElementById('admin-bc-input').value = ""; }); }
+        async function postNews() { const title = document.getElementById('admin-news-title').value.trim(), content = document.getElementById('admin-news-content').value.trim(); const date = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short' }), time = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }); await db.ref('news_logs').push({ title, content, date, time }); showToast("Published!"); }
+    </script>
+</body>
+</html>
